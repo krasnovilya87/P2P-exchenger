@@ -1,0 +1,5 @@
+{
+  "description": "P2P currency conversion and arbitrage calculator with AI-powered rate estimation.",
+  "requestFramePermissions": [],
+  "name": "P2P Exchanger"
+}
