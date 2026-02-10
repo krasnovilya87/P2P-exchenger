@@ -121,23 +121,20 @@ const App = () => {
     
     const diff = calculateSpread(r, cb);
     
-    // Determine the precision of the CB rate from the API
-    const cbRawStr = cb.toString();
-    const dotIndex = cbRawStr.indexOf('.');
-    // Use the natural decimals of CB, minimum 2, maximum 6 for readability
-    const cbPrecision = dotIndex === -1 ? 2 : Math.min(Math.max(cbRawStr.length - dotIndex - 1, 2), 6);
+    // User requested 2 decimal places for display of CB rate and Spread
+    const displayPrecision = 2;
 
-    // Format diff to string using the SAME precision as CB display
+    // Format diff to string using requested precision
     const absDiff = Math.abs(diff);
-    // Threshold for showing as 0 based on selected precision
-    const zeroThreshold = 1 / Math.pow(10, cbPrecision + 1);
-    const diffStr = absDiff < zeroThreshold ? "0." + "0".repeat(cbPrecision) + "%" : (diff > 0 ? "+" : "-") + absDiff.toFixed(cbPrecision) + "%";
+    // Threshold for showing as 0 based on 2 decimal places (0.005 rounds to 0.01)
+    const zeroThreshold = 0.005;
+    const diffStr = absDiff < zeroThreshold ? "0.00%" : (diff > 0 ? "+" : "-") + absDiff.toFixed(displayPrecision) + "%";
 
     return { 
-      cb: cb.toFixed(cbPrecision), 
-      set: r.toFixed(cbPrecision), 
+      cb: cb.toFixed(displayPrecision), 
+      set: r.toFixed(displayPrecision), 
       diff: diffStr, 
-      diffVal: diff 
+      diffVal: diff // Still contains high precision for internal logic
     };
   };
 
@@ -190,12 +187,10 @@ const App = () => {
     if (!cbBuy || !cbSell) return;
     const currencyChanged = lastSource.current !== sourceCurr || lastTarget.current !== targetCurr;
     
-    // Default spread is zero for any currency not explicitly configured.
-    // Removed the force-switch to 'exact' mode to allow immediate use of 'approx' mode with 0 spread.
-
     if ((isProMode && calcMode === 'approx') || currencyChanged || p(buyRate) === 0) {
       const sprBuy = getSpreadFor(sourceCurr);
       const sprSell = getSpreadFor(targetCurr);
+      // High precision math for calculations
       const newBuyRate = cbBuy * (1 + parseFloat(sprBuy.buy) / 100);
       const newSellRate = cbSell * (1 + parseFloat(sprSell.sell) / 100);
       const fBuy = fmt(newBuyRate);
@@ -245,10 +240,11 @@ const App = () => {
     const bVal = p(formattedBuy); const sVal = p(formattedSell);
     const cbBuy = apiRates[sourceCurr]; const cbSell = apiRates[targetCurr];
     if (cbBuy && cbSell && bVal > 0 && sVal > 0) {
+       // Save spreads with high precision for future "approx" calculations
        setSpreads(prev => ({
           ...prev,
-          [sourceCurr]: { ...(prev[sourceCurr] || { buy: '0', sell: '0' }), buy: calculateSpread(bVal, cbBuy).toFixed(6) },
-          [targetCurr]: { ...(prev[targetCurr] || { buy: '0', sell: '0' }), sell: calculateSpread(sVal, cbSell).toFixed(6) }
+          [sourceCurr]: { ...(prev[sourceCurr] || { buy: '0', sell: '0' }), buy: calculateSpread(bVal, cbBuy).toFixed(8) },
+          [targetCurr]: { ...(prev[targetCurr] || { buy: '0', sell: '0' }), sell: calculateSpread(sVal, cbSell).toFixed(8) }
        }));
     }
     const usdt = p(amountUsdt);
