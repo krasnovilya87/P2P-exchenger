@@ -52,6 +52,9 @@ const App = () => {
   const [amountBuy, setAmountBuy] = useState<string>('10 000');
   const [amountSale, setAmountSale] = useState<string>('');
   const [amountUsdt, setAmountUsdt] = useState<string>('');
+  
+  // Track which field was edited to keep calculations consistent during auto-updates
+  const [lastEditedField, setLastEditedField] = useState<'buy' | 'sell' | 'usdt'>('buy');
 
   const [apiRates, setApiRates] = useState<Record<string, number>>({});
 
@@ -103,13 +106,8 @@ const App = () => {
     }
   };
 
-  /**
-   * Calculates the percentage difference with high precision 
-   * but treats extremely small values as zero to avoid floating point noise.
-   */
   const calculateSpread = (r: number, cb: number) => {
     if (!r || !cb) return 0;
-    // Use an epsilon for equality to handle float precision issues
     if (Math.abs(r - cb) < 0.00000001) return 0;
     return ((r - cb) / cb) * 100;
   };
@@ -120,13 +118,8 @@ const App = () => {
     if (!r || !cb) return null;
     
     const diff = calculateSpread(r, cb);
-    
-    // User requested 2 decimal places for display of CB rate and Spread
-    const displayPrecision = 2;
-
-    // Format diff to string using requested precision
+    const displayPrecision = 2; // Fixed 2 decimal places for display
     const absDiff = Math.abs(diff);
-    // Threshold for showing as 0 based on 2 decimal places (0.005 rounds to 0.01)
     const zeroThreshold = 0.005;
     const diffStr = absDiff < zeroThreshold ? "0.00%" : (diff > 0 ? "+" : "-") + absDiff.toFixed(displayPrecision) + "%";
 
@@ -134,7 +127,7 @@ const App = () => {
       cb: cb.toFixed(displayPrecision), 
       set: r.toFixed(displayPrecision), 
       diff: diffStr, 
-      diffVal: diff // Still contains high precision for internal logic
+      diffVal: diff 
     };
   };
 
@@ -190,28 +183,45 @@ const App = () => {
     if ((isProMode && calcMode === 'approx') || currencyChanged || p(buyRate) === 0) {
       const sprBuy = getSpreadFor(sourceCurr);
       const sprSell = getSpreadFor(targetCurr);
-      // High precision math for calculations
       const newBuyRate = cbBuy * (1 + parseFloat(sprBuy.buy) / 100);
       const newSellRate = cbSell * (1 + parseFloat(sprSell.sell) / 100);
       const fBuy = fmt(newBuyRate);
       const fSell = fmt(newSellRate);
       setBuyRate(fBuy);
       setSellRate(fSell);
-      const buyAmt = p(amountBuy);
-      if (buyAmt > 0) {
-        const usdt = buyAmt / newBuyRate;
-        setAmountUsdt(fmt(usdt));
-        setAmountSale(fmt(usdt * newSellRate));
+
+      // Re-calculate based on the last field the user was interacting with
+      if (lastEditedField === 'buy') {
+        const buyAmt = p(amountBuy);
+        if (buyAmt > 0) {
+          const usdt = buyAmt / newBuyRate;
+          setAmountUsdt(fmt(usdt));
+          setAmountSale(fmt(usdt * newSellRate));
+        }
+      } else if (lastEditedField === 'sell') {
+        const sellAmt = p(amountSale);
+        if (sellAmt > 0) {
+          const usdt = sellAmt / newSellRate;
+          setAmountUsdt(fmt(usdt));
+          setAmountBuy(fmt(usdt * newBuyRate));
+        }
+      } else {
+        const usdtAmt = p(amountUsdt);
+        if (usdtAmt > 0) {
+          setAmountBuy(fmt(usdtAmt * newBuyRate));
+          setAmountSale(fmt(usdtAmt * newSellRate));
+        }
       }
     }
     lastSource.current = sourceCurr;
     lastTarget.current = targetCurr;
-  }, [isProMode, calcMode, apiRates, sourceCurr, targetCurr, spreads, configuredCurrencies, amountBuy, buyRate]);
+  }, [isProMode, calcMode, apiRates, sourceCurr, targetCurr, spreads, amountBuy, amountSale, amountUsdt, lastEditedField]);
 
   useEffect(() => { recalculateRates(); }, [recalculateRates]);
 
   // --- HANDLERS ---
   const handleSaleChange = (val: string) => {
+    setLastEditedField('sell');
     const formatted = formatInputString(val); setAmountSale(formatted);
     const sRate = p(sellRate); const bRate = p(buyRate); const targetVal = p(formatted);
     if (sRate > 0 && bRate > 0) {
@@ -220,6 +230,7 @@ const App = () => {
   };
 
   const handleBuyChange = (val: string) => {
+    setLastEditedField('buy');
     const formatted = formatInputString(val); setAmountBuy(formatted);
     const sRate = p(sellRate); const bRate = p(buyRate); const sourceVal = p(formatted);
     if (bRate > 0 && sRate > 0) {
@@ -228,6 +239,7 @@ const App = () => {
   };
 
   const handleUsdtChange = (val: string) => {
+    setLastEditedField('usdt');
     const formatted = formatInputString(val); setAmountUsdt(formatted);
     const sRate = p(sellRate); const bRate = p(buyRate); const usdtVal = p(formatted);
     if (sRate > 0 && bRate > 0) { setAmountBuy(fmt(usdtVal * bRate)); setAmountSale(fmt(usdtVal * sRate)); }
@@ -240,15 +252,29 @@ const App = () => {
     const bVal = p(formattedBuy); const sVal = p(formattedSell);
     const cbBuy = apiRates[sourceCurr]; const cbSell = apiRates[targetCurr];
     if (cbBuy && cbSell && bVal > 0 && sVal > 0) {
-       // Save spreads with high precision for future "approx" calculations
        setSpreads(prev => ({
           ...prev,
           [sourceCurr]: { ...(prev[sourceCurr] || { buy: '0', sell: '0' }), buy: calculateSpread(bVal, cbBuy).toFixed(8) },
           [targetCurr]: { ...(prev[targetCurr] || { buy: '0', sell: '0' }), sell: calculateSpread(sVal, cbSell).toFixed(8) }
        }));
     }
-    const usdt = p(amountUsdt);
-    if (usdt > 0) { setAmountBuy(fmt(usdt * bVal)); setAmountSale(fmt(usdt * sVal)); }
+    // After manual rate change, update amounts based on the last edited field
+    if (lastEditedField === 'buy') {
+      const buyAmt = p(amountBuy);
+      if (bVal > 0 && sVal > 0 && buyAmt > 0) {
+        const usdt = buyAmt / bVal; setAmountUsdt(fmt(usdt)); setAmountSale(fmt(usdt * sVal));
+      }
+    } else if (lastEditedField === 'sell') {
+      const sellAmt = p(amountSale);
+      if (bVal > 0 && sVal > 0 && sellAmt > 0) {
+        const usdt = sellAmt / sVal; setAmountUsdt(fmt(usdt)); setAmountBuy(fmt(usdt * bVal));
+      }
+    } else {
+      const usdtAmt = p(amountUsdt);
+      if (bVal > 0 && sVal > 0 && usdtAmt > 0) {
+        setAmountBuy(fmt(usdtAmt * bVal)); setAmountSale(fmt(usdtAmt * sVal));
+      }
+    }
   };
 
   const getFlag = (code: string) => {
